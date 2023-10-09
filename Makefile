@@ -9,7 +9,7 @@ MAKEPWD:=$(dir $(realpath $(firstword $(MAKEFILE_LIST))))
 CGO_ENABLED:=0
 GOOS?=linux
 GOARCH?=amd64
-VERSION?=1.8.0
+VERSION?=v1.8.0
 REGISTRY?="ghcr.io/kosmos-io"
 
 .PHONY: all
@@ -22,7 +22,7 @@ coredns: $(CHECKS)
 .PHONY: images
 images: coredns
 	set -e;\
-	docker buildx build --output=type=docker --platform ${GOOS}/${GOARCH} --tag ${REGISTRY}/coredns:v${VERSION} .
+	docker buildx build --output=type=docker --platform ${GOOS}/${GOARCH} --tag ${REGISTRY}/coredns:${VERSION} .
 
 .PHONY: push-images
 upload-images: images
