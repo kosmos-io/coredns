@@ -19,10 +19,15 @@ all: coredns
 coredns: $(CHECKS)
 	CGO_ENABLED=$(CGO_ENABLED) GOOS=${GOOS} GOARCH=${GOARCH} go build $(BUILDOPTS) -ldflags="-s -w -X github.com/coredns/coredns/coremain.GitCommit=$(GITCOMMIT)" -o $(BINARY)
 
-.PHONY: image
-image: coredns
+.PHONY: images
+images: coredns
 	set -e;\
 	docker buildx build --output=type=docker --platform ${GOOS}/${GOARCH} --tag ${REGISTRY}/coredns:v${VERSION} .
+
+.PHONY: push-images
+upload-images: images
+	@echo "push images to $(REGISTRY)"
+	docker push ${REGISTRY}/coredns:${VERSION}
 
 .PHONY: check
 check: core/plugin/zplugin.go core/dnsserver/zdirectives.go
