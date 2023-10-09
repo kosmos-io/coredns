@@ -7,13 +7,22 @@ BUILDOPTS:=-v
 GOPATH?=$(HOME)/go
 MAKEPWD:=$(dir $(realpath $(firstword $(MAKEFILE_LIST))))
 CGO_ENABLED:=0
+GOOS?=linux
+GOARCH?=amd64
+VERSION?=1.8.0
+REGISTRY?="ghcr.io/kosmos-io"
 
 .PHONY: all
 all: coredns
 
 .PHONY: coredns
 coredns: $(CHECKS)
-	CGO_ENABLED=$(CGO_ENABLED) $(SYSTEM) go build $(BUILDOPTS) -ldflags="-s -w -X github.com/coredns/coredns/coremain.GitCommit=$(GITCOMMIT)" -o $(BINARY)
+	CGO_ENABLED=$(CGO_ENABLED) GOOS=${GOOS} GOARCH=${GOARCH} go build $(BUILDOPTS) -ldflags="-s -w -X github.com/coredns/coredns/coremain.GitCommit=$(GITCOMMIT)" -o $(BINARY)
+
+.PHONY: image
+image: coredns
+	set -e;\
+	docker buildx build --output=type=docker --platform ${GOOS}/${GOARCH} --tag ${REGISTRY}/coredns:v${VERSION} .
 
 .PHONY: check
 check: core/plugin/zplugin.go core/dnsserver/zdirectives.go

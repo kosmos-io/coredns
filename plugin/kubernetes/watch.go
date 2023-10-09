@@ -19,6 +19,16 @@ func serviceWatchFunc(ctx context.Context, c kubernetes.Interface, ns string, s 
 	}
 }
 
+func nodeWatchFunc(ctx context.Context, c kubernetes.Interface, s labels.Selector) func(options meta.ListOptions) (watch.Interface, error) {
+	return func(options meta.ListOptions) (watch.Interface, error) {
+		if s != nil {
+			options.LabelSelector = s.String()
+		}
+		w, err := c.CoreV1().Nodes().Watch(ctx, options)
+		return w, err
+	}
+}
+
 func podWatchFunc(ctx context.Context, c kubernetes.Interface, ns string, s labels.Selector) func(options meta.ListOptions) (watch.Interface, error) {
 	return func(options meta.ListOptions) (watch.Interface, error) {
 		if s != nil {

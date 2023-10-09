@@ -65,8 +65,8 @@ func (k *Kubernetes) RegisterKubeCache(c *caddy.Controller) {
 	c.OnStartup(func() error {
 		go k.APIConn.Run()
 
-		timeout := time.After(5 * time.Second)
-		ticker := time.NewTicker(100 * time.Millisecond)
+		timeout := time.After(60 * time.Second)
+		ticker := time.NewTicker(500 * time.Millisecond)
 		for {
 			select {
 			case <-ticker.C:
@@ -239,6 +239,11 @@ func ParseStanza(c *caddy.Controller) (*Kubernetes, error) {
 				return nil, c.ArgErr()
 			}
 			k8s.opts.initEndpointsCache = false
+		case "node":
+			if len(c.RemainingArgs()) != 0 {
+				return nil, c.ArgErr()
+			}
+			k8s.opts.initNodesCache = true
 		case "ignore":
 			args := c.RemainingArgs()
 			if len(args) > 0 {

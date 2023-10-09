@@ -20,7 +20,7 @@ import (
 	api "k8s.io/api/core/v1"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
@@ -217,9 +217,14 @@ func (k *Kubernetes) InitKubeCache(ctx context.Context) (err error) {
 		return err
 	}
 
-	kubeClient, err := kubernetes.NewForConfig(config)
+	//kubeClient, err := kubernetes.NewForConfig(config)
+	//if err != nil {
+	//	return fmt.Errorf("failed to create kubernetes notification controller: %q", err)
+	//}
+
+	dynamicClient, err := dynamic.NewForConfig(config)
 	if err != nil {
-		return fmt.Errorf("failed to create kubernetes notification controller: %q", err)
+		return fmt.Errorf("failed to create dynamic client: %q", err)
 	}
 
 	if k.opts.labelSelector != nil {
@@ -244,7 +249,8 @@ func (k *Kubernetes) InitKubeCache(ctx context.Context) (err error) {
 
 	k.opts.zones = k.Zones
 	k.opts.endpointNameMode = k.endpointNameMode
-	k.APIConn = newdnsController(ctx, kubeClient, k.opts)
+
+	k.APIConn = newClusterController(ctx, dynamicClient, k.opts)
 
 	return err
 }

@@ -1,0 +1,19 @@
+.:53 {
+    errors
+    health {
+        lameduck 5s
+    }
+    ready
+    kubernetes kosmos.local cluster.local in-addr.arpa ip6.arpa {
+        pods insecure
+        ttl 30
+        kubeconfig /path/to/kubeconfig kubernetes-admin@cluster.local
+    }
+    hosts /etc/add-hosts/customer-hosts . {
+        fallthrough kosmos.local cluster.local in-addr.arpa ip6.arpa
+    }
+    prometheus :9153
+    cache 30
+    reload
+    loadbalance
+}

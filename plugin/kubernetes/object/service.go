@@ -3,6 +3,9 @@ package object
 import (
 	"fmt"
 
+	"github.com/coredns/coredns/plugin/pkg/log"
+	"github.com/coredns/coredns/plugin/pkg/netmap"
+
 	api "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 )
@@ -29,17 +32,17 @@ type Service struct {
 func ServiceKey(name, namespace string) string { return name + "." + namespace }
 
 // ToService returns a function that converts an api.Service to a *Service.
-func ToService(skipCleanup bool) ToFunc {
+func ToService(skipCleanup bool, cidrsMap map[string]string) ToFunc {
 	return func(obj interface{}) (interface{}, error) {
 		svc, ok := obj.(*api.Service)
 		if !ok {
 			return nil, fmt.Errorf("unexpected object %v", obj)
 		}
-		return toService(skipCleanup, svc), nil
+		return toService(skipCleanup, svc, cidrsMap), nil
 	}
 }
 
-func toService(skipCleanup bool, svc *api.Service) *Service {
+func toService(skipCleanup bool, svc *api.Service, cidrsMap map[string]string) *Service {
 	s := &Service{
 		Version:      svc.GetResourceVersion(),
 		Name:         svc.GetName(),
@@ -50,6 +53,15 @@ func toService(skipCleanup bool, svc *api.Service) *Service {
 		ExternalName: svc.Spec.ExternalName,
 
 		ExternalIPs: make([]string, len(svc.Status.LoadBalancer.Ingress)+len(svc.Spec.ExternalIPs)),
+	}
+
+	if cidrsMap != nil && s.ClusterIP != "" && s.ClusterIP != "None" {
+		mappedIP, err := netmap.NetMap(s.ClusterIP, cidrsMap)
+		if err != nil {
+			log.Error("failed to map ip, err: %v, clusterIP: %s", err, s.ClusterIP)
+		} else {
+			s.ClusterIP = mappedIP
+		}
 	}
 
 	if len(svc.Spec.Ports) == 0 {

@@ -3,6 +3,9 @@ package object
 import (
 	"fmt"
 
+	"github.com/coredns/coredns/plugin/pkg/log"
+	"github.com/coredns/coredns/plugin/pkg/netmap"
+
 	api "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 )
@@ -46,18 +49,18 @@ type EndpointPort struct {
 func EndpointsKey(name, namespace string) string { return name + "." + namespace }
 
 // ToEndpoints returns a function that converts an *api.Endpoints to a *Endpoints.
-func ToEndpoints(skipCleanup bool) ToFunc {
+func ToEndpoints(skipCleanup bool, cidrsMap map[string]string) ToFunc {
 	return func(obj interface{}) (interface{}, error) {
 		eps, ok := obj.(*api.Endpoints)
 		if !ok {
 			return nil, fmt.Errorf("unexpected object %v", obj)
 		}
-		return toEndpoints(skipCleanup, eps), nil
+		return toEndpoints(skipCleanup, eps, cidrsMap), nil
 	}
 }
 
 // toEndpoints converts an *api.Endpoints to a *Endpoints.
-func toEndpoints(skipCleanup bool, end *api.Endpoints) *Endpoints {
+func toEndpoints(skipCleanup bool, end *api.Endpoints, cidrsMap map[string]string) *Endpoints {
 	e := &Endpoints{
 		Version:   end.GetResourceVersion(),
 		Name:      end.GetName(),
@@ -77,7 +80,18 @@ func toEndpoints(skipCleanup bool, end *api.Endpoints) *Endpoints {
 		}
 
 		for j, a := range eps.Addresses {
-			ea := EndpointAddress{IP: a.IP, Hostname: a.Hostname}
+
+			temp := a.IP
+			if cidrsMap != nil && a.IP != "" {
+				mappedIP, err := netmap.NetMap(a.IP, cidrsMap)
+				if err != nil {
+					log.Error("failed to map ip, err: %v, epIP: %s", err, a.IP)
+				} else {
+					temp = mappedIP
+				}
+			}
+
+			ea := EndpointAddress{IP: temp, Hostname: a.Hostname}
 			if a.NodeName != nil {
 				ea.NodeName = *a.NodeName
 			}
@@ -97,7 +111,18 @@ func toEndpoints(skipCleanup bool, end *api.Endpoints) *Endpoints {
 
 	for _, eps := range end.Subsets {
 		for _, a := range eps.Addresses {
-			e.IndexIP = append(e.IndexIP, a.IP)
+
+			temp := a.IP
+			if cidrsMap != nil && a.IP != "" {
+				mappedIP, err := netmap.NetMap(a.IP, cidrsMap)
+				if err != nil {
+					log.Error("failed to map ip, err: %v, epIP: %s", err, a.IP)
+				} else {
+					temp = mappedIP
+				}
+			}
+
+			e.IndexIP = append(e.IndexIP, temp)
 		}
 	}
 

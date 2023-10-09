@@ -28,7 +28,7 @@ func TestDnsProgrammingLatency(t *testing.T) {
 		initEndpointsCache: true,
 		// This is needed as otherwise the fake k8s client doesn't work properly.
 		skipAPIObjectsCleanup: true,
-	})
+	}, nil)
 	durationSinceFunc = func(t time.Time) time.Duration {
 		return now.Sub(t)
 	}

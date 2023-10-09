@@ -12,6 +12,7 @@ import (
 
 	api "k8s.io/api/core/v1"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
@@ -24,6 +25,7 @@ const (
 	svcIPIndex            = "ServiceIP"
 	epNameNamespaceIndex  = "EndpointNameNamespace"
 	epIPIndex             = "EndpointsIP"
+	nodeNameIndex         = "NodeName"
 )
 
 type dnsController interface {
@@ -33,6 +35,7 @@ type dnsController interface {
 	SvcIndexReverse(string) []*object.Service
 	PodIndex(string) []*object.Pod
 	EpIndex(string) []*object.Endpoints
+	NodeIndex(string) []*api.Node
 	EpIndexReverse(string) []*object.Endpoints
 
 	GetNodeByName(context.Context, string) (*api.Node, error)
@@ -57,15 +60,17 @@ type dnsControl struct {
 	selector          labels.Selector
 	namespaceSelector labels.Selector
 
-	svcController cache.Controller
-	podController cache.Controller
-	epController  cache.Controller
-	nsController  cache.Controller
+	svcController  cache.Controller
+	podController  cache.Controller
+	epController   cache.Controller
+	nsController   cache.Controller
+	nodeController cache.Controller
 
-	svcLister cache.Indexer
-	podLister cache.Indexer
-	epLister  cache.Indexer
-	nsLister  cache.Store
+	svcLister  cache.Indexer
+	podLister  cache.Indexer
+	epLister   cache.Indexer
+	nsLister   cache.Store
+	nodeLister cache.Indexer
 
 	// stopLock is used to enforce only a single call to Stop is active.
 	// Needed because we allow stopping through an http endpoint and
@@ -76,11 +81,14 @@ type dnsControl struct {
 
 	zones            []string
 	endpointNameMode bool
+
+	clusterInfo *unstructured.Unstructured
 }
 
 type dnsControlOpts struct {
 	initPodCache       bool
 	initEndpointsCache bool
+	initNodesCache     bool
 	ignoreEmptyService bool
 
 	// Label handling.
@@ -95,7 +103,7 @@ type dnsControlOpts struct {
 }
 
 // newDNSController creates a controller for CoreDNS.
-func newdnsController(ctx context.Context, kubeClient kubernetes.Interface, opts dnsControlOpts) *dnsControl {
+func newdnsController(ctx context.Context, kubeClient kubernetes.Interface, opts dnsControlOpts, cluster *unstructured.Unstructured) *dnsControl {
 	dns := dnsControl{
 		client:            kubeClient,
 		selector:          opts.selector,
@@ -103,6 +111,13 @@ func newdnsController(ctx context.Context, kubeClient kubernetes.Interface, opts
 		stopCh:            make(chan struct{}),
 		zones:             opts.zones,
 		endpointNameMode:  opts.endpointNameMode,
+		clusterInfo:       cluster,
+	}
+
+	var cidrsMap map[string]string
+	obj, exists, err := unstructured.NestedStringMap(cluster.Object, "spec", "globalCIDRsMap")
+	if exists && err == nil {
+		cidrsMap = obj
 	}
 
 	dns.svcLister, dns.svcController = object.NewIndexerInformer(
@@ -113,7 +128,7 @@ func newdnsController(ctx context.Context, kubeClient kubernetes.Interface, opts
 		&api.Service{},
 		cache.ResourceEventHandlerFuncs{AddFunc: dns.Add, UpdateFunc: dns.Update, DeleteFunc: dns.Delete},
 		cache.Indexers{svcNameNamespaceIndex: svcNameNamespaceIndexFunc, svcIPIndex: svcIPIndexFunc},
-		object.DefaultProcessor(object.ToService(opts.skipAPIObjectsCleanup), nil),
+		object.DefaultProcessor(object.ToService(opts.skipAPIObjectsCleanup, cidrsMap), nil),
 	)
 
 	if opts.initPodCache {
@@ -125,7 +140,25 @@ func newdnsController(ctx context.Context, kubeClient kubernetes.Interface, opts
 			&api.Pod{},
 			cache.ResourceEventHandlerFuncs{AddFunc: dns.Add, UpdateFunc: dns.Update, DeleteFunc: dns.Delete},
 			cache.Indexers{podIPIndex: podIPIndexFunc},
-			object.DefaultProcessor(object.ToPod(opts.skipAPIObjectsCleanup), nil),
+			object.DefaultProcessor(object.ToPod(opts.skipAPIObjectsCleanup, cidrsMap), nil),
+		)
+	}
+
+	if opts.initNodesCache {
+		var identity object.ToFunc
+		identity = func(obj interface{}) (interface{}, error) {
+			return obj, nil
+		}
+
+		dns.nodeLister, dns.nodeController = object.NewIndexerInformer(
+			&cache.ListWatch{
+				ListFunc:  nodeListFunc(ctx, dns.client, dns.selector),
+				WatchFunc: nodeWatchFunc(ctx, dns.client, dns.selector),
+			},
+			&api.Node{},
+			cache.ResourceEventHandlerFuncs{AddFunc: dns.Add, UpdateFunc: dns.Update, DeleteFunc: dns.Delete},
+			cache.Indexers{nodeNameIndex: nodeNameIndexFunc},
+			object.DefaultProcessor(identity, nil),
 		)
 	}
 
@@ -138,7 +171,7 @@ func newdnsController(ctx context.Context, kubeClient kubernetes.Interface, opts
 			&api.Endpoints{},
 			cache.ResourceEventHandlerFuncs{AddFunc: dns.Add, UpdateFunc: dns.Update, DeleteFunc: dns.Delete},
 			cache.Indexers{epNameNamespaceIndex: epNameNamespaceIndexFunc, epIPIndex: epIPIndexFunc},
-			object.DefaultProcessor(object.ToEndpoints(opts.skipAPIObjectsCleanup), dns.recordDNSProgrammingLatency),
+			object.DefaultProcessor(object.ToEndpoints(opts.skipAPIObjectsCleanup, cidrsMap), dns.recordDNSProgrammingLatency),
 		)
 	}
 
@@ -186,6 +219,14 @@ func svcNameNamespaceIndexFunc(obj interface{}) ([]string, error) {
 	return []string{s.Index}, nil
 }
 
+func nodeNameIndexFunc(obj interface{}) ([]string, error) {
+	s, ok := obj.(*api.Node)
+	if !ok {
+		return nil, errObj
+	}
+	return []string{s.Name}, nil
+}
+
 func epNameNamespaceIndexFunc(obj interface{}) ([]string, error) {
 	s, ok := obj.(*object.Endpoints)
 	if !ok {
@@ -208,6 +249,16 @@ func serviceListFunc(ctx context.Context, c kubernetes.Interface, ns string, s l
 			opts.LabelSelector = s.String()
 		}
 		listV1, err := c.CoreV1().Services(ns).List(ctx, opts)
+		return listV1, err
+	}
+}
+
+func nodeListFunc(ctx context.Context, c kubernetes.Interface, s labels.Selector) func(meta.ListOptions) (runtime.Object, error) {
+	return func(opts meta.ListOptions) (runtime.Object, error) {
+		if s != nil {
+			opts.LabelSelector = s.String()
+		}
+		listV1, err := c.CoreV1().Nodes().List(ctx, opts)
 		return listV1, err
 	}
 }
@@ -271,6 +322,9 @@ func (dns *dnsControl) Run() {
 	if dns.podController != nil {
 		go dns.podController.Run(dns.stopCh)
 	}
+	if dns.nodeController != nil {
+		go dns.nodeController.Run(dns.stopCh)
+	}
 	go dns.nsController.Run(dns.stopCh)
 	<-dns.stopCh
 }
@@ -287,7 +341,11 @@ func (dns *dnsControl) HasSynced() bool {
 		c = dns.podController.HasSynced()
 	}
 	d := dns.nsController.HasSynced()
-	return a && b && c && d
+	e := true
+	if dns.nodeController != nil {
+		e = dns.nodeController.HasSynced()
+	}
+	return a && b && c && d && e
 }
 
 func (dns *dnsControl) ServiceList() (svcs []*object.Service) {
@@ -375,6 +433,21 @@ func (dns *dnsControl) EpIndex(idx string) (ep []*object.Endpoints) {
 	return ep
 }
 
+func (dns *dnsControl) NodeIndex(idx string) (nodes []*api.Node) {
+	os, err := dns.nodeLister.ByIndex(nodeNameIndex, idx)
+	if err != nil {
+		return nil
+	}
+	for _, o := range os {
+		e, ok := o.(*api.Node)
+		if !ok {
+			continue
+		}
+		nodes = append(nodes, e)
+	}
+	return nodes
+}
+
 func (dns *dnsControl) EpIndexReverse(ip string) (ep []*object.Endpoints) {
 	os, err := dns.epLister.ByIndex(epIPIndex, ip)
 	if err != nil {
@@ -431,6 +504,8 @@ func (dns *dnsControl) detectChanges(oldObj, newObj interface{}) {
 	case *object.Service:
 		dns.updateModifed()
 	case *object.Pod:
+		dns.updateModifed()
+	case *api.Node:
 		dns.updateModifed()
 	case *object.Endpoints:
 		if !endpointsEquivalent(oldObj.(*object.Endpoints), newObj.(*object.Endpoints)) {

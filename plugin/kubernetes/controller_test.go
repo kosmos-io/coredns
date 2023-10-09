@@ -11,6 +11,7 @@ import (
 	"github.com/miekg/dns"
 	api "k8s.io/api/core/v1"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
 )
@@ -30,7 +31,7 @@ func BenchmarkController(b *testing.B) {
 		zones: []string{"cluster.local."},
 	}
 	ctx := context.Background()
-	controller := newdnsController(ctx, client, dco)
+	controller := newdnsController(ctx, client, dco, &unstructured.Unstructured{})
 	cidr := "10.0.0.0/19"
 
 	// Add resources
