@@ -15,6 +15,7 @@ import (
 	api "k8s.io/api/core/v1"
 	discovery "k8s.io/api/discovery/v1"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
 )
@@ -34,7 +35,7 @@ func kubernetesWithFakeClient(ctx context.Context, zone, cidr string, initEndpoi
 		zones:              []string{zone},
 		initEndpointsCache: initEndpointsCache,
 	}
-	controller := newdnsController(ctx, client, dco)
+	controller := newdnsController(ctx, client, dco, &unstructured.Unstructured{})
 
 	// Add resources
 	_, err := client.CoreV1().Namespaces().Create(ctx, &api.Namespace{ObjectMeta: meta.ObjectMeta{Name: "testns"}}, meta.CreateOptions{})

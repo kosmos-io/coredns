@@ -1,0 +1,29 @@
+apiVersion: v1
+data:
+  Corefile: |
+    .:53 {
+        errors
+        health {
+            lameduck 5s
+        }
+        ready
+        rewrite stop {
+            name regex (.*).kosmos.local {1}.cluster.local
+            answer name (.*).cluster.local {1}.kosmos.local
+        }
+        kubernetes cluster.local in-addr.arpa ip6.arpa {
+            pods insecure
+            ttl 30
+        }
+        hosts /etc/add-hosts/customer-hosts . {
+            fallthrough cluster.local in-addr.arpa ip6.arpa
+        }
+        prometheus :9153
+        cache 30
+        reload
+        loadbalance
+    }
+kind: ConfigMap
+metadata:
+  name: coredns
+  namespace: kosmos-system

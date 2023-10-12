@@ -3,6 +3,8 @@ package object
 import (
 	"fmt"
 
+	"github.com/coredns/coredns/plugin/pkg/netmap"
+
 	discovery "k8s.io/api/discovery/v1"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -47,7 +49,7 @@ type EndpointPort struct {
 func EndpointsKey(name, namespace string) string { return name + "." + namespace }
 
 // EndpointSliceToEndpoints converts a *discovery.EndpointSlice to a *Endpoints.
-func EndpointSliceToEndpoints(obj meta.Object) (meta.Object, error) {
+func EndpointSliceToEndpoints(obj meta.Object, cidrsMap map[string]string) (meta.Object, error) {
 	ends, ok := obj.(*discovery.EndpointSlice)
 	if !ok {
 		return nil, fmt.Errorf("unexpected object %v", obj)
@@ -87,7 +89,16 @@ func EndpointSliceToEndpoints(obj meta.Object) (meta.Object, error) {
 		if !endpointsliceReady(end.Conditions.Ready) {
 			continue
 		}
-		for _, a := range end.Addresses {
+		for _, ip := range end.Addresses {
+			a := ip
+			if cidrsMap != nil {
+				mappedIP, err := netmap.NetMap(ip, cidrsMap)
+				if err != nil {
+					return nil, fmt.Errorf("failed to map ip, err: %v, epIP: %s", err, ip)
+				}
+				a = mappedIP
+			}
+
 			ea := EndpointAddress{IP: a}
 			if end.Hostname != nil {
 				ea.Hostname = *end.Hostname

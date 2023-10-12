@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -13,6 +14,7 @@ import (
 	api "k8s.io/api/core/v1"
 	discovery "k8s.io/api/discovery/v1"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/watch"
@@ -84,6 +86,8 @@ type dnsControl struct {
 
 	zones            []string
 	endpointNameMode bool
+
+	clusterInfo *unstructured.Unstructured
 }
 
 type dnsControlOpts struct {
@@ -102,7 +106,7 @@ type dnsControlOpts struct {
 }
 
 // newdnsController creates a controller for CoreDNS.
-func newdnsController(ctx context.Context, kubeClient kubernetes.Interface, opts dnsControlOpts) *dnsControl {
+func newdnsController(ctx context.Context, kubeClient kubernetes.Interface, opts dnsControlOpts, cluster *unstructured.Unstructured) *dnsControl {
 	dns := dnsControl{
 		client:            kubeClient,
 		selector:          opts.selector,
@@ -110,7 +114,16 @@ func newdnsController(ctx context.Context, kubeClient kubernetes.Interface, opts
 		stopCh:            make(chan struct{}),
 		zones:             opts.zones,
 		endpointNameMode:  opts.endpointNameMode,
+		clusterInfo:       cluster,
 	}
+
+	var cidrsMap map[string]string
+	obj, exists, err := unstructured.NestedStringMap(cluster.Object, strings.Split(KosmosClusterGlobalMapPath, "/")...)
+	if exists && err == nil {
+		cidrsMap = obj
+	}
+
+	// func ToService(obj meta.Object, cidrsMap map[string]string) (meta.Object, error)
 
 	dns.svcLister, dns.svcController = object.NewIndexerInformer(
 		&cache.ListWatch{
@@ -120,7 +133,9 @@ func newdnsController(ctx context.Context, kubeClient kubernetes.Interface, opts
 		&api.Service{},
 		cache.ResourceEventHandlerFuncs{AddFunc: dns.Add, UpdateFunc: dns.Update, DeleteFunc: dns.Delete},
 		cache.Indexers{svcNameNamespaceIndex: svcNameNamespaceIndexFunc, svcIPIndex: svcIPIndexFunc, svcExtIPIndex: svcExtIPIndexFunc},
-		object.DefaultProcessor(object.ToService, nil),
+		object.DefaultProcessor(func(obj meta.Object) (meta.Object, error) {
+			return object.ToService(obj, cidrsMap)
+		}, nil),
 	)
 
 	podLister, podController := object.NewIndexerInformer(
@@ -131,7 +146,9 @@ func newdnsController(ctx context.Context, kubeClient kubernetes.Interface, opts
 		&api.Pod{},
 		cache.ResourceEventHandlerFuncs{AddFunc: dns.Add, UpdateFunc: dns.Update, DeleteFunc: dns.Delete},
 		cache.Indexers{podIPIndex: podIPIndexFunc},
-		object.DefaultProcessor(object.ToPod, nil),
+		object.DefaultProcessor(func(obj meta.Object) (meta.Object, error) {
+			return object.ToPod(obj, cidrsMap)
+		}, nil),
 	)
 	dns.podLister = podLister
 	if opts.initPodCache {
@@ -146,7 +163,9 @@ func newdnsController(ctx context.Context, kubeClient kubernetes.Interface, opts
 		&discovery.EndpointSlice{},
 		cache.ResourceEventHandlerFuncs{AddFunc: dns.Add, UpdateFunc: dns.Update, DeleteFunc: dns.Delete},
 		cache.Indexers{epNameNamespaceIndex: epNameNamespaceIndexFunc, epIPIndex: epIPIndexFunc},
-		object.DefaultProcessor(object.EndpointSliceToEndpoints, dns.EndpointSliceLatencyRecorder()),
+		object.DefaultProcessor(func(obj meta.Object) (meta.Object, error) {
+			return object.EndpointSliceToEndpoints(obj, cidrsMap)
+		}, dns.EndpointSliceLatencyRecorder()),
 	)
 	dns.epLister = epLister
 	if opts.initEndpointsCache {

@@ -1,0 +1,9 @@
+apiVersion: v1
+data:
+  customer-hosts: |
+    #customer-hosts
+    #10.10.10.10 myhost
+kind: ConfigMap
+metadata:
+  name: coredns-customer-hosts
+  namespace: kosmos-system

@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/coredns/coredns/plugin/pkg/netmap"
+
 	api "k8s.io/api/core/v1"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -23,7 +25,7 @@ type Pod struct {
 var errPodTerminating = errors.New("pod terminating")
 
 // ToPod converts an api.Pod to a *Pod.
-func ToPod(obj meta.Object) (meta.Object, error) {
+func ToPod(obj meta.Object, cidrsMap map[string]string) (meta.Object, error) {
 	apiPod, ok := obj.(*api.Pod)
 	if !ok {
 		return nil, fmt.Errorf("unexpected object %v", obj)
@@ -34,6 +36,15 @@ func ToPod(obj meta.Object) (meta.Object, error) {
 		Namespace: apiPod.GetNamespace(),
 		Name:      apiPod.GetName(),
 	}
+
+	if cidrsMap != nil && pod.PodIP != "" {
+		mappedIP, err := netmap.NetMap(pod.PodIP, cidrsMap)
+		if err != nil {
+			return nil, fmt.Errorf("failed to map ip, err: %v, podIP: %s", err, pod.PodIP)
+		}
+		pod.PodIP = mappedIP
+	}
+
 	t := apiPod.ObjectMeta.DeletionTimestamp
 	if t != nil && !(*t).Time.IsZero() {
 		// if the pod is in the process of termination, return an error so it can be ignored
