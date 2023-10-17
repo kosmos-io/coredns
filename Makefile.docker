@@ -25,14 +25,16 @@ ifeq (, $(shell which jq))
     $(error "No jq in $$PATH, please install")
 endif
 
+# GITHUB_USER
+GITHUB_USER:=
 # VERSION is the version we should download and use.
 VERSION:=
 # DOCKER is the docker image repo we need to push to.
-DOCKER:=
+DOCKER:=ghcr.io/$(GITHUB_USER)
 NAME:=coredns
-GITHUB:=https://github.com/coredns/coredns/releases/download
+GITHUB:=https://github.com/$(GITHUB_USER)/coredns/releases/download
 # mips is not in LINUX_ARCH because it's not supported by docker manifest. Keep this list in sync with the one in Makefile.release
-LINUX_ARCH:=amd64 arm arm64 mips64le ppc64le s390x riscv64
+LINUX_ARCH:=amd64 arm arm64
 DOCKER_IMAGE_NAME:=$(DOCKER)/$(NAME)
 DOCKER_IMAGE_LIST_VERSIONED:=$(shell echo $(LINUX_ARCH) | sed -e "s~mips64le ~~g" | sed -e "s~[^ ]*~$(DOCKER_IMAGE_NAME):&\-$(VERSION)~g")
 
@@ -102,7 +104,6 @@ else
 	@# Pushes coredns/coredns-$arch:$version images
 	@# Creates manifest for multi-arch image
 	@# Pushes multi-arch image to coredns/coredns:$version
-	@echo $(DOCKER_PASSWORD) | docker login -u $(DOCKER_LOGIN) --password-stdin
 	@echo Pushing: $(VERSION) to $(DOCKER_IMAGE_NAME)
 	for arch in $(LINUX_ARCH); do \
 		docker push $(DOCKER_IMAGE_NAME):$${arch}-$(VERSION) ;\
@@ -111,8 +112,4 @@ else
 	docker manifest create --amend $(DOCKER_IMAGE_NAME):latest $(DOCKER_IMAGE_LIST_VERSIONED)
 	docker manifest push --purge $(DOCKER_IMAGE_NAME):$(VERSION)
 	docker manifest push --purge $(DOCKER_IMAGE_NAME):latest
-	TOKEN=$$(curl -s -H "Content-Type: application/json" -X POST -d "{\"username\":\"$(DOCKER_LOGIN)\",\"password\":\"$(DOCKER_PASSWORD)\"}" "https://hub.docker.com/v2/users/login/" | jq -r .token) ; \
-	for arch in $(LINUX_ARCH); do \
-		curl -X DELETE -H "Authorization: JWT $${TOKEN}" "https://hub.docker.com/v2/repositories/$(DOCKER_IMAGE_NAME)/tags/$${arch}-$(VERSION)/" ;\
-	done
 endif

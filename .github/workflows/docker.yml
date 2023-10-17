@@ -10,20 +10,24 @@ on:
         required: true
 
 permissions:
+  packages: write
   contents: read
 
 jobs:
   docker-release:
     runs-on: ubuntu-latest
     env:
-      DOCKER_LOGIN: ${{ secrets.DOCKERHUB_USERNAME }}
-      DOCKER_PASSWORD: ${{ secrets.DOCKERHUB_PASSWORD }}
       RELEASE: ${{ github.event.inputs.release || github.event.release.tag_name }}
     steps:
       - uses: actions/checkout@v4
       - name: Build Docker Images
-        run: make VERSION=${RELEASE:1} DOCKER=coredns -f Makefile.docker release
+        run: make VERSION=${RELEASE:1} GITHUB_USER=${{ github.actor }} -f Makefile.docker release
+      - name: Set up qemu
+        uses: docker/setup-qemu-action@v2
+      - name: Login registry
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
       - name: Show Docker Images
         run: docker images
       - name: Publish Docker Images
-        run: make VERSION=${RELEASE:1} DOCKER=coredns -f Makefile.docker docker-push
+        run: make VERSION=${RELEASE:1} GITHUB_USER=${{ github.actor }} -f Makefile.docker docker-push
